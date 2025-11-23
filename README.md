@@ -17,6 +17,8 @@ A comprehensive, modular PowerShell diagnostic tool for Windows 11 Enterprise wo
 - [Known Limitations](#known-limitations)
 - [Extending the Tool](#extending-the-tool)
 - [Troubleshooting](#troubleshooting)
+- [Checks and Thresholds Summary](#checks-and-thresholds-summary)
+- [Performance Thresholds Reference](#performance-thresholds-reference)
 
 ## Overview
 
@@ -37,7 +39,7 @@ PULSE collects detailed system performance data over a configurable sampling per
 | Hardware Inventory | CPU, memory, disk, BIOS, TPM information |
 | Performance Sampling | 60-second collection of CPU, memory, disk, and network metrics |
 | Process Analysis | Top processes by CPU, memory, disk I/O; issue detection |
-| Browser Analysis | Chrome and Edge resource consumption and extension counts |
+| Browser Analysis | Chrome/Edge detailed analysis; Chrome/Edge/Firefox memory monitoring |
 | Configuration Health | Page file, Windows Update, Intune enrollment, GPO checks |
 | Event Log Analysis | 48-hour scan for errors, crashes, and failures |
 | Dual Output | JSON (structured data) and HTML (visual report) |
@@ -138,6 +140,8 @@ Collects performance counters over the sampling window.
 | Counter | Category | Metric |
 |---------|----------|--------|
 | `\Processor(_Total)\% Processor Time` | CPU | Overall utilization |
+| `\Processor(_Total)\% DPC Time` | CPU | Deferred procedure call time |
+| `\Processor(_Total)\% Interrupt Time` | CPU | Hardware interrupt time |
 | `\System\Processor Queue Length` | CPU | Thread queue depth |
 | `\Memory\Available MBytes` | Memory | Free memory |
 | `\Memory\Committed Bytes` | Memory | Committed memory |
@@ -174,7 +178,7 @@ Analyzes running processes for resource consumption and issues.
 
 **Function:** `Get-BrowserAnalysis`
 
-Analyzes Chrome and Edge browser resource usage.
+Analyzes Chrome and Edge browser resource usage. Firefox memory usage is monitored in Process Analysis for potential issues.
 
 | Data Collected | Chrome | Edge |
 |----------------|--------|------|
@@ -421,7 +425,7 @@ Review the `*_errors.log` file in the output directory for any collection failur
 
 ## Checks and Thresholds Summary
 
-This section provides a consolidated view of all checks performed by the tool and what triggers each status.
+**Quick reference** for technicians. For detailed threshold documentation with sources, see [Performance Thresholds Reference](#performance-thresholds-reference).
 
 ### Health Summary Checks
 
@@ -445,7 +449,7 @@ These checks create **actionable items** for technicians with context (What, Why
 
 | Check | Trigger | Severity |
 |-------|---------|----------|
-| Browser Memory | >8GB OR >50% of system RAM | Medium (High if >12GB or >60% RAM) |
+| Browser Memory (Chrome/Edge/Firefox) | >8GB or >50% of system RAM (whichever is higher) | Medium (High if >12GB or >60% RAM) |
 | High Memory Application | >2GB (non-browser apps) | Medium (High if >4GB) |
 | Windows Update Active | TiWorker, TrustedInstaller, or wuauclt running | Info |
 | Defender Scan Active | Full or Quick scan in progress (via Get-MpComputerStatus) | Info |
@@ -457,7 +461,7 @@ This data is collected and displayed for context but does not trigger warnings:
 
 | Section | Data Collected |
 |---------|----------------|
-| Browser Analysis | Process count, memory per process, extensions, GPU memory |
+| Browser Analysis | Chrome/Edge: process count, memory per process, extensions, GPU memory |
 | Event Log Summary | Disk events, kernel errors, app crashes, update failures (48 hours) |
 | Configuration Health | Page file config, pending updates, Intune enrollment, GPO remnants, startup programs |
 | Top Processes | Top 10 by CPU time, memory, and disk I/O |
@@ -470,7 +474,7 @@ This data is collected and displayed for context but does not trigger warnings:
 
 ## Performance Thresholds Reference
 
-This section documents all performance thresholds used by the tool, with sources for validation by peers.
+**Detailed documentation** of all thresholds with authoritative sources for peer review and validation. For a quick reference, see [Checks and Thresholds Summary](#checks-and-thresholds-summary).
 
 ### CPU Utilization
 
@@ -600,8 +604,8 @@ This section documents all performance thresholds used by the tool, with sources
 
 | Threshold | Status | Description |
 |-----------|--------|-------------|
-| < 8 GB | Normal | Typical browser usage, even with many tabs |
-| > 8 GB or > 50% RAM | Warning | Potentially excessive, investigate |
+| < 8 GB and < 50% RAM | Normal | Typical browser usage, even with many tabs |
+| > 8 GB or > 50% RAM (whichever is higher) | Warning | Potentially excessive, investigate |
 | > 12 GB or > 60% RAM | High | Likely memory leak or extreme usage |
 
 **Note:** Process count is NOT a meaningful indicator of browser problems. Modern browsers create many processes by design (one per tab, per extension, plus utility processes). 75+ processes is normal.
