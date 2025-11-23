@@ -16,7 +16,6 @@ A comprehensive, modular PowerShell diagnostic tool for Windows 11 Enterprise wo
 - [Permissions](#permissions)
 - [Known Limitations](#known-limitations)
 - [Extending the Tool](#extending-the-tool)
-- [Intune Deployment](#intune-deployment)
 - [Troubleshooting](#troubleshooting)
 
 ## Overview
@@ -77,8 +76,8 @@ The script uses built-in cmdlets and does not require external modules:
 
 ### Enterprise Deployment
 
-1. Host the script on a network share or deploy via Intune
-2. See [Intune Deployment](#intune-deployment) section for packaging recommendations
+1. Host the script on a network share accessible to technicians
+2. Deploy to a known location on workstations (e.g., `C:\Tools\PULSE.ps1`)
 
 ## Usage
 
@@ -381,72 +380,6 @@ if ($Script:Results.PerformanceSampling.CPU.Statistics.ProcessorTime.Average -gt
     [void]$issues.Add("High average CPU usage detected")
 }
 ```
-
-## Intune Deployment
-
-### Proactive Remediation (Detection Only)
-
-The script can be packaged for Intune Proactive Remediations as a detection script:
-
-#### Detection Script
-
-```powershell
-# Detection: Check if a recent scan exists with issues
-$scanPath = "C:\ProgramData\PerfScan"
-$recentScan = Get-ChildItem -Path $scanPath -Filter "*.json" -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-
-if (-not $recentScan) {
-    Write-Output "No recent scan found"
-    exit 1  # Non-compliant - trigger remediation
-}
-
-$scanData = Get-Content $recentScan.FullName | ConvertFrom-Json
-$scanAge = (Get-Date) - $recentScan.LastWriteTime
-
-# Check if scan is recent (within 7 days) and healthy
-if ($scanAge.TotalDays -gt 7) {
-    Write-Output "Scan is older than 7 days"
-    exit 1
-}
-
-if ($scanData.HealthSummary.OverallStatus -eq "Fail") {
-    Write-Output "System health: FAIL"
-    exit 1
-}
-
-Write-Output "System health: $($scanData.HealthSummary.OverallStatus)"
-exit 0  # Compliant
-```
-
-#### Remediation Script
-
-```powershell
-# Remediation: Run performance scan
-$scriptPath = "C:\ProgramData\Scripts\PULSE.ps1"
-
-if (Test-Path $scriptPath) {
-    & $scriptPath -SampleDuration 30
-    exit 0
-}
-else {
-    Write-Output "Script not found at $scriptPath"
-    exit 1
-}
-```
-
-### Win32 App Deployment
-
-1. Create an `.intunewin` package with the script
-2. Install command: `powershell.exe -ExecutionPolicy Bypass -File PULSE.ps1`
-3. Detection rule: Check for existence of recent JSON output
-
-### SCCM/MECM Deployment
-
-Create a Package/Program or Application with:
-- Program: `powershell.exe -ExecutionPolicy Bypass -File PULSE.ps1`
-- Detection: File exists `C:\ProgramData\PULSE\*.json`
 
 ## Troubleshooting
 
