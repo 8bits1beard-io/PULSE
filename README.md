@@ -622,10 +622,6 @@ This section documents all performance thresholds used by the tool, with sources
 
 **Joshua Walderbach**
 
-## Support
-
-For issues or feature requests, contact your IT Engineering team.
-
 ---
 
 *This tool is designed for internal IT use in enterprise environments.*
