@@ -1011,7 +1011,7 @@ function Get-ProcessAnalysis {
         TopByCPU = @()
         TopByMemory = @()
         TopByDiskIO = @()
-        PotentialIssues = @()
+        Observations = @()
     }
 
     try {
@@ -1212,8 +1212,8 @@ function Get-ProcessAnalysis {
             }
         }
 
-        $processData.PotentialIssues = @($issues)
-        Write-Host " found $($issues.Count) actionable issues" -ForegroundColor Gray
+        $processData.Observations = @($issues)
+        Write-Host " found $($issues.Count) observations" -ForegroundColor Gray
     }
     catch {
         Add-InternalError -Module "ProcessAnalysis" -Message "Failed to analyze processes" -ErrorRecord $_
@@ -1265,12 +1265,50 @@ function Get-BrowserAnalysis {
                 } | Sort-Object MemoryMB -Descending | Select-Object -First 10)
             }
 
-            # Try to count extensions
+            # Try to enumerate extensions with names
             try {
                 $chromeExtPath = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Extensions"
                 if (Test-Path $chromeExtPath) {
-                    $extensions = Get-ChildItem -Path $chromeExtPath -Directory -ErrorAction SilentlyContinue
-                    $browserData.Chrome.ExtensionCount = $extensions.Count
+                    $extensionDirs = Get-ChildItem -Path $chromeExtPath -Directory -ErrorAction SilentlyContinue
+                    $browserData.Chrome.ExtensionCount = $extensionDirs.Count
+                    $extensionList = [System.Collections.ArrayList]::new()
+
+                    foreach ($extDir in $extensionDirs) {
+                        # Each extension has version subdirectories, get the latest
+                        $versionDir = Get-ChildItem -Path $extDir.FullName -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
+                        if ($versionDir) {
+                            $manifestPath = Join-Path $versionDir.FullName "manifest.json"
+                            if (Test-Path $manifestPath) {
+                                try {
+                                    $manifest = Get-Content -Path $manifestPath -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
+                                    if ($manifest.name) {
+                                        # Handle localized names (start with __)
+                                        $extName = $manifest.name
+                                        if ($extName -match '^__MSG_(.+)__$') {
+                                            # Try to get localized name from _locales
+                                            $localePath = Join-Path $versionDir.FullName "_locales\en\messages.json"
+                                            if (Test-Path $localePath) {
+                                                $localeData = Get-Content -Path $localePath -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
+                                                $msgKey = $matches[1]
+                                                if ($localeData.$msgKey.message) {
+                                                    $extName = $localeData.$msgKey.message
+                                                }
+                                            }
+                                        }
+                                        [void]$extensionList.Add([ordered]@{
+                                            Name = $extName
+                                            Version = $manifest.version
+                                            Description = if ($manifest.description -and $manifest.description -notmatch '^__MSG_') { $manifest.description.Substring(0, [Math]::Min(100, $manifest.description.Length)) } else { $null }
+                                        })
+                                    }
+                                }
+                                catch {
+                                    # Skip extensions we can't parse
+                                }
+                            }
+                        }
+                    }
+                    $browserData.Chrome.Extensions = @($extensionList | Sort-Object Name)
                 }
             }
             catch {
@@ -1317,12 +1355,50 @@ function Get-BrowserAnalysis {
                 } | Sort-Object MemoryMB -Descending | Select-Object -First 10)
             }
 
-            # Try to count extensions
+            # Try to enumerate extensions with names
             try {
                 $edgeExtPath = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Extensions"
                 if (Test-Path $edgeExtPath) {
-                    $extensions = Get-ChildItem -Path $edgeExtPath -Directory -ErrorAction SilentlyContinue
-                    $browserData.Edge.ExtensionCount = $extensions.Count
+                    $extensionDirs = Get-ChildItem -Path $edgeExtPath -Directory -ErrorAction SilentlyContinue
+                    $browserData.Edge.ExtensionCount = $extensionDirs.Count
+                    $extensionList = [System.Collections.ArrayList]::new()
+
+                    foreach ($extDir in $extensionDirs) {
+                        # Each extension has version subdirectories, get the latest
+                        $versionDir = Get-ChildItem -Path $extDir.FullName -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
+                        if ($versionDir) {
+                            $manifestPath = Join-Path $versionDir.FullName "manifest.json"
+                            if (Test-Path $manifestPath) {
+                                try {
+                                    $manifest = Get-Content -Path $manifestPath -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
+                                    if ($manifest.name) {
+                                        # Handle localized names (start with __)
+                                        $extName = $manifest.name
+                                        if ($extName -match '^__MSG_(.+)__$') {
+                                            # Try to get localized name from _locales
+                                            $localePath = Join-Path $versionDir.FullName "_locales\en\messages.json"
+                                            if (Test-Path $localePath) {
+                                                $localeData = Get-Content -Path $localePath -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
+                                                $msgKey = $matches[1]
+                                                if ($localeData.$msgKey.message) {
+                                                    $extName = $localeData.$msgKey.message
+                                                }
+                                            }
+                                        }
+                                        [void]$extensionList.Add([ordered]@{
+                                            Name = $extName
+                                            Version = $manifest.version
+                                            Description = if ($manifest.description -and $manifest.description -notmatch '^__MSG_') { $manifest.description.Substring(0, [Math]::Min(100, $manifest.description.Length)) } else { $null }
+                                        })
+                                    }
+                                }
+                                catch {
+                                    # Skip extensions we can't parse
+                                }
+                            }
+                        }
+                    }
+                    $browserData.Edge.Extensions = @($extensionList | Sort-Object Name)
                 }
             }
             catch {
@@ -1363,11 +1439,169 @@ function Get-ConfigurationHealth {
 
     $configData = [ordered]@{
         CollectionTimestamp = (Get-Date).ToString("o")
+        PendingReboot = $null
+        RecentlyInstalled = $null
         PageFile = $null
         WindowsUpdate = $null
         IntuneEnrollment = $null
         CompanyPortal = $null
         GPOCheck = $null
+        UserProfile = $null
+    }
+
+    # Pending Reboot Detection
+    Write-Host "    Checking pending reboot..." -NoNewline -ForegroundColor Gray
+    try {
+        $rebootRequired = $false
+        $rebootReasons = [System.Collections.ArrayList]::new()
+
+        # Check Component Based Servicing
+        if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") {
+            $rebootRequired = $true
+            [void]$rebootReasons.Add("Component Based Servicing (CBS) has pending operations")
+        }
+
+        # Check Windows Update
+        if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") {
+            $rebootRequired = $true
+            [void]$rebootReasons.Add("Windows Update requires a reboot")
+        }
+
+        # Check Pending File Rename Operations
+        $pendingFileRename = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name "PendingFileRenameOperations" -ErrorAction SilentlyContinue
+        if ($pendingFileRename.PendingFileRenameOperations) {
+            $rebootRequired = $true
+            [void]$rebootReasons.Add("Pending file rename operations")
+        }
+
+        # Check Computer Rename Pending
+        $activeComputerName = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName" -Name "ComputerName" -ErrorAction SilentlyContinue
+        $pendingComputerName = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName" -Name "ComputerName" -ErrorAction SilentlyContinue
+        if ($activeComputerName.ComputerName -ne $pendingComputerName.ComputerName) {
+            $rebootRequired = $true
+            [void]$rebootReasons.Add("Computer rename pending")
+        }
+
+        # Check SCCM Client (if installed)
+        try {
+            $sccmReboot = Invoke-CimMethod -Namespace "root\ccm\ClientSDK" -ClassName "CCM_ClientUtilities" -MethodName "DetermineIfRebootPending" -ErrorAction SilentlyContinue
+            if ($sccmReboot -and $sccmReboot.RebootPending) {
+                $rebootRequired = $true
+                [void]$rebootReasons.Add("SCCM client reports reboot pending")
+            }
+        }
+        catch {
+            # SCCM not installed, ignore
+        }
+
+        $configData.PendingReboot = [ordered]@{
+            IsRebootPending = $rebootRequired
+            Reasons = @($rebootReasons)
+            HealthStatus = if ($rebootRequired) { "Warning" } else { "Pass" }
+        }
+
+        if ($rebootRequired) {
+            Write-Host " REBOOT NEEDED" -ForegroundColor Yellow
+        }
+        else {
+            Write-Host " none" -ForegroundColor Gray
+        }
+    }
+    catch {
+        Write-Host " error" -ForegroundColor Yellow
+        Add-InternalError -Module "ConfigHealth" -Message "Failed to check pending reboot" -ErrorRecord $_
+    }
+
+    # Recently Installed Software/Updates (Last 7 Days)
+    Write-Host "    Checking recent installations..." -NoNewline -ForegroundColor Gray
+    try {
+        $sevenDaysAgo = (Get-Date).AddDays(-7)
+        $recentItems = [ordered]@{
+            Software = @()
+            Updates = @()
+        }
+
+        # Get recently installed software from registry
+        $uninstallPaths = @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        )
+
+        $recentSoftware = foreach ($path in $uninstallPaths) {
+            Get-ItemProperty -Path $path -ErrorAction SilentlyContinue |
+                Where-Object { $_.InstallDate -and $_.DisplayName } |
+                ForEach-Object {
+                    $installDateStr = $_.InstallDate
+                    $installDate = $null
+                    if ($installDateStr -match '^\d{8}$') {
+                        $installDate = [DateTime]::ParseExact($installDateStr, "yyyyMMdd", $null)
+                    }
+                    if ($installDate -and $installDate -ge $sevenDaysAgo) {
+                        [PSCustomObject]@{
+                            Name = $_.DisplayName
+                            Version = $_.DisplayVersion
+                            InstallDate = $installDate.ToString("yyyy-MM-dd")
+                            Publisher = $_.Publisher
+                        }
+                    }
+                }
+        } | Sort-Object InstallDate -Descending | Select-Object -Unique -Property Name, Version, InstallDate, Publisher
+
+        $recentItems.Software = @($recentSoftware | ForEach-Object {
+            [ordered]@{
+                Name = $_.Name
+                Version = $_.Version
+                InstallDate = $_.InstallDate
+                Publisher = $_.Publisher
+            }
+        })
+
+        # Get recently installed Windows Updates
+        try {
+            $updateSession = New-Object -ComObject Microsoft.Update.Session -ErrorAction Stop
+            $updateSearcher = $updateSession.CreateUpdateSearcher()
+            $historyCount = $updateSearcher.GetTotalHistoryCount()
+            if ($historyCount -gt 0) {
+                $history = $updateSearcher.QueryHistory(0, $historyCount)
+                $recentUpdates = $history | Where-Object {
+                    $_.Date -ge $sevenDaysAgo -and $_.ResultCode -eq 2  # 2 = Succeeded
+                } | ForEach-Object {
+                    [ordered]@{
+                        Title = $_.Title
+                        Date = $_.Date.ToString("yyyy-MM-dd HH:mm")
+                        Type = switch ($_.Categories | Select-Object -First 1 -ExpandProperty Name -ErrorAction SilentlyContinue) {
+                            "Security Updates" { "Security" }
+                            "Critical Updates" { "Critical" }
+                            "Definition Updates" { "Definitions" }
+                            "Feature Packs" { "Feature" }
+                            "Update Rollups" { "Rollup" }
+                            "Updates" { "Update" }
+                            "Drivers" { "Driver" }
+                            default { "Other" }
+                        }
+                    }
+                }
+                $recentItems.Updates = @($recentUpdates)
+            }
+        }
+        catch {
+            # Windows Update COM object may not be available
+        }
+
+        $configData.RecentlyInstalled = [ordered]@{
+            TimeframeDays = 7
+            SoftwareCount = $recentItems.Software.Count
+            UpdateCount = $recentItems.Updates.Count
+            Software = $recentItems.Software
+            Updates = $recentItems.Updates
+        }
+
+        $totalRecent = $recentItems.Software.Count + $recentItems.Updates.Count
+        Write-Host " $totalRecent items in last 7 days" -ForegroundColor Gray
+    }
+    catch {
+        Write-Host " error" -ForegroundColor Yellow
+        Add-InternalError -Module "ConfigHealth" -Message "Failed to get recent installations" -ErrorRecord $_
     }
 
     # Page File Configuration
@@ -1467,26 +1701,39 @@ function Get-ConfigurationHealth {
                 UPN = $enrollmentInfo.UPN
                 AADResourceID = $enrollmentInfo.AADResourceID
                 LastSyncTime = $null
-                HealthStatus = "Pass"
+                LastSyncAgo = $null
             }
 
             # Try to get last sync time
             try {
                 $scheduleKey = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Enrollments\$($enrollmentInfo.PSChildName)\DMClient\MS DM Server" -ErrorAction SilentlyContinue
                 if ($scheduleKey.LastSuccessfulSync) {
-                    $configData.IntuneEnrollment.LastSyncTime = [DateTime]::FromFileTime($scheduleKey.LastSuccessfulSync).ToString("yyyy-MM-dd HH:mm:ss")
+                    $lastSyncDateTime = [DateTime]::FromFileTime($scheduleKey.LastSuccessfulSync)
+                    $configData.IntuneEnrollment.LastSyncTime = $lastSyncDateTime.ToString("yyyy-MM-dd HH:mm:ss")
+
+                    # Calculate time since last sync
+                    $syncAge = (Get-Date) - $lastSyncDateTime
+                    if ($syncAge.TotalDays -ge 1) {
+                        $configData.IntuneEnrollment.LastSyncAgo = "$([math]::Floor($syncAge.TotalDays)) days ago"
+                    }
+                    elseif ($syncAge.TotalHours -ge 1) {
+                        $configData.IntuneEnrollment.LastSyncAgo = "$([math]::Floor($syncAge.TotalHours)) hours ago"
+                    }
+                    else {
+                        $configData.IntuneEnrollment.LastSyncAgo = "$([math]::Floor($syncAge.TotalMinutes)) minutes ago"
+                    }
                 }
             }
             catch {
                 $configData.IntuneEnrollment.LastSyncTime = "Unable to determine"
             }
-            Write-Host " enrolled" -ForegroundColor Gray
+
+            $syncStatus = if ($configData.IntuneEnrollment.LastSyncAgo) { " (synced $($configData.IntuneEnrollment.LastSyncAgo))" } else { "" }
+            Write-Host " enrolled$syncStatus" -ForegroundColor Gray
         }
         else {
             $configData.IntuneEnrollment = [ordered]@{
                 IsEnrolled = $false
-                HealthStatus = "Warning"
-                Message = "Device does not appear to be Intune enrolled"
             }
             Write-Host " not enrolled" -ForegroundColor Gray
         }
@@ -1676,18 +1923,120 @@ function Get-ConfigurationHealth {
             # Silently continue if we can't enumerate scheduled tasks
         }
 
-        $configData.StartupPrograms = [ordered]@{
-            TotalCount = $startupItems.Count
-            Items = @($startupItems)
-            HealthStatus = if ($startupItems.Count -gt 15) { "Warning" } elseif ($startupItems.Count -gt 25) { "Fail" } else { "Pass" }
-            Note = if ($startupItems.Count -gt 15) { "High number of startup items may slow boot and login" } else { $null }
+        # Get startup impact from Task Manager's startup data (if available)
+        $startupAppInfo = @{}
+        try {
+            $startupApps = Get-CimInstance -ClassName Win32_StartupCommand -ErrorAction SilentlyContinue
+            # Also try to get startup impact from registry where Task Manager stores it
+            $startupApprovedPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+            if (Test-Path $startupApprovedPath) {
+                $approvedItems = Get-ItemProperty -Path $startupApprovedPath -ErrorAction SilentlyContinue
+                # Disabled items have first byte != 02 or 06
+            }
+        }
+        catch {
+            # Startup impact data not available
         }
 
-        Write-Host " found $($startupItems.Count)" -ForegroundColor $(if ($startupItems.Count -gt 15) { "Yellow" } else { "Gray" })
+        # Categorize startup items by known impact
+        $highImpactKeywords = @('Teams', 'Spotify', 'Discord', 'Steam', 'Epic', 'Origin', 'Slack', 'Zoom', 'Skype', 'iTunes', 'Adobe', 'Dropbox', 'OneDrive', 'GoogleDrive', 'iCloud')
+        $knownLowImpact = @('SecurityHealth', 'Windows Security', 'Microsoft Edge', 'CTFMon', 'igfxTray')
+
+        $highImpactCount = 0
+        foreach ($item in $startupItems) {
+            $impact = "Unknown"
+            $itemName = $item.Name
+            $itemCommand = $item.Command
+
+            # Check against known high-impact applications
+            foreach ($keyword in $highImpactKeywords) {
+                if ($itemName -match $keyword -or $itemCommand -match $keyword) {
+                    $impact = "High"
+                    $highImpactCount++
+                    break
+                }
+            }
+
+            # Check known low-impact items
+            if ($impact -eq "Unknown") {
+                foreach ($lowItem in $knownLowImpact) {
+                    if ($itemName -match $lowItem -or $itemCommand -match $lowItem) {
+                        $impact = "Low"
+                        break
+                    }
+                }
+            }
+
+            $item.Impact = $impact
+        }
+
+        $configData.StartupPrograms = [ordered]@{
+            TotalCount = $startupItems.Count
+            HighImpactCount = $highImpactCount
+            Items = @($startupItems)
+        }
+
+        Write-Host " found $($startupItems.Count)" -ForegroundColor Gray
     }
     catch {
         Write-Host " error" -ForegroundColor Yellow
         Add-InternalError -Module "ConfigHealth" -Message "Failed to enumerate startup programs" -ErrorRecord $_
+    }
+
+    # User Profile Size
+    Write-Host "    Checking user profile size..." -NoNewline -ForegroundColor Gray
+    try {
+        $userProfile = $env:USERPROFILE
+        $profileSizeBytes = 0
+        $largestFolders = @()
+
+        # Get total profile size (this can take a moment on large profiles)
+        # We'll use a faster method by sampling key folders
+        $keyFolders = @(
+            @{ Name = "Desktop"; Path = Join-Path $userProfile "Desktop" },
+            @{ Name = "Documents"; Path = Join-Path $userProfile "Documents" },
+            @{ Name = "Downloads"; Path = Join-Path $userProfile "Downloads" },
+            @{ Name = "AppData\Local"; Path = Join-Path $userProfile "AppData\Local" },
+            @{ Name = "AppData\Roaming"; Path = Join-Path $userProfile "AppData\Roaming" },
+            @{ Name = "Pictures"; Path = Join-Path $userProfile "Pictures" },
+            @{ Name = "Videos"; Path = Join-Path $userProfile "Videos" },
+            @{ Name = "Music"; Path = Join-Path $userProfile "Music" }
+        )
+
+        $folderSizes = foreach ($folder in $keyFolders) {
+            if (Test-Path $folder.Path) {
+                $size = (Get-ChildItem -Path $folder.Path -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum -ErrorAction SilentlyContinue).Sum
+                if ($null -eq $size) { $size = 0 }
+                $profileSizeBytes += $size
+                [PSCustomObject]@{
+                    Name = $folder.Name
+                    SizeBytes = $size
+                    SizeGB = [math]::Round($size / 1GB, 2)
+                }
+            }
+        }
+
+        $largestFolders = @($folderSizes | Sort-Object SizeBytes -Descending | Select-Object -First 5 | ForEach-Object {
+            [ordered]@{
+                Folder = $_.Name
+                SizeGB = $_.SizeGB
+            }
+        })
+
+        $profileSizeGB = [math]::Round($profileSizeBytes / 1GB, 2)
+
+        $configData.UserProfile = [ordered]@{
+            Path = $userProfile
+            Username = $env:USERNAME
+            TotalSizeGB = $profileSizeGB
+            LargestFolders = $largestFolders
+        }
+
+        Write-Host " $profileSizeGB GB" -ForegroundColor Gray
+    }
+    catch {
+        Write-Host " error" -ForegroundColor Yellow
+        Add-InternalError -Module "ConfigHealth" -Message "Failed to check user profile size" -ErrorRecord $_
     }
 
     Write-Log -Message "Configuration health check complete" -Level Success
@@ -1954,6 +2303,439 @@ function Export-JsonReport {
     }
     catch {
         Add-InternalError -Module "Export" -Message "Failed to save JSON report" -ErrorRecord $_
+        return $false
+    }
+}
+
+function Get-WorkNoteSummary {
+    <#
+    .SYNOPSIS
+        Generates a brief text summary suitable for ServiceNow work notes
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$Data
+    )
+
+    $sb = [System.Text.StringBuilder]::new()
+
+    # Header
+    [void]$sb.AppendLine("════════════════════════════════════════════════════════════")
+    [void]$sb.AppendLine("PULSE REPORT | $($Data.Metadata.Hostname) | $($Data.Metadata.ScanTimestamp)")
+    [void]$sb.AppendLine("════════════════════════════════════════════════════════════")
+    [void]$sb.AppendLine()
+
+    # Health Status
+    [void]$sb.AppendLine("HEALTH STATUS: $($Data.HealthSummary.OverallStatus)")
+
+    # Pending Reboot
+    if ($Data.ConfigurationHealth.PendingReboot.IsRebootPending) {
+        [void]$sb.AppendLine("  !! REBOOT PENDING - $($Data.ConfigurationHealth.PendingReboot.Reasons -join '; ')")
+    }
+
+    # Key metrics
+    if ($Data.PerformanceSampling.CPU.Statistics) {
+        $cpuAvg = $Data.PerformanceSampling.CPU.Statistics.ProcessorTime.Average
+        $cpuIcon = if ($cpuAvg -lt 80) { "[OK]" } else { "[!!]" }
+        [void]$sb.AppendLine("  $cpuIcon CPU: $cpuAvg% avg")
+    }
+
+    if ($Data.SystemInformation.Memory) {
+        $memUsed = $Data.SystemInformation.Memory.UsedPercent
+        $memIcon = if ($memUsed -lt 90) { "[OK]" } else { "[!!]" }
+        [void]$sb.AppendLine("  $memIcon Memory: $memUsed% used ($($Data.SystemInformation.Memory.AvailableGB) GB free)")
+    }
+
+    if ($Data.SystemInformation.Volumes) {
+        $lowestFree = ($Data.SystemInformation.Volumes | Sort-Object FreeSpacePercent | Select-Object -First 1)
+        $diskIcon = if ($lowestFree.FreeSpacePercent -gt 10) { "[OK]" } else { "[!!]" }
+        [void]$sb.AppendLine("  $diskIcon Disk: $($lowestFree.FreeSpacePercent)% free on $($lowestFree.DriveLetter)")
+    }
+
+    if ($Data.PerformanceSampling.Disk.Statistics) {
+        $avgLatency = [math]::Max($Data.PerformanceSampling.Disk.Statistics.ReadLatencyMs.Average, $Data.PerformanceSampling.Disk.Statistics.WriteLatencyMs.Average)
+        $latencyIcon = if ($avgLatency -lt 50) { "[OK]" } else { "[!!]" }
+        [void]$sb.AppendLine("  $latencyIcon Disk Latency: $([math]::Round($avgLatency, 1))ms avg")
+    }
+
+    if ($Data.PerformanceSampling.InterruptDPC.Statistics.CombinedTime) {
+        $dpcIsr = $Data.PerformanceSampling.InterruptDPC.Statistics.CombinedTime.Average
+        if ($dpcIsr -gt 15) {
+            $dpcIcon = if ($dpcIsr -lt 30) { "[??]" } else { "[!!]" }
+            [void]$sb.AppendLine("  $dpcIcon DPC/ISR: $([math]::Round($dpcIsr, 1))%")
+        }
+    }
+
+    [void]$sb.AppendLine()
+
+    # System Info
+    [void]$sb.AppendLine("SYSTEM")
+    if ($Data.SystemInformation.OperatingSystem) {
+        [void]$sb.AppendLine("  OS: $($Data.SystemInformation.OperatingSystem.Caption) ($($Data.SystemInformation.OperatingSystem.BuildNumber))")
+        [void]$sb.AppendLine("  Uptime: $($Data.SystemInformation.OperatingSystem.UptimeFormatted)")
+    }
+    if ($Data.SystemInformation.CPU) {
+        [void]$sb.AppendLine("  CPU: $($Data.SystemInformation.CPU.Name)")
+    }
+    if ($Data.SystemInformation.Memory) {
+        [void]$sb.AppendLine("  RAM: $($Data.SystemInformation.Memory.TotalPhysicalGB) GB")
+    }
+    [void]$sb.AppendLine()
+
+    # Intune Status
+    if ($Data.ConfigurationHealth.IntuneEnrollment) {
+        [void]$sb.AppendLine("INTUNE")
+        if ($Data.ConfigurationHealth.IntuneEnrollment.IsEnrolled) {
+            $syncInfo = if ($Data.ConfigurationHealth.IntuneEnrollment.LastSyncAgo) { " (Last sync: $($Data.ConfigurationHealth.IntuneEnrollment.LastSyncAgo))" } else { "" }
+            [void]$sb.AppendLine("  Enrolled: Yes$syncInfo")
+        }
+        else {
+            [void]$sb.AppendLine("  Enrolled: No")
+        }
+        [void]$sb.AppendLine()
+    }
+
+    # Observations (if any significant ones)
+    if ($Data.ProcessAnalysis.Observations -and $Data.ProcessAnalysis.Observations.Count -gt 0) {
+        [void]$sb.AppendLine("OBSERVATIONS")
+        foreach ($obs in $Data.ProcessAnalysis.Observations | Select-Object -First 5) {
+            [void]$sb.AppendLine("  - $($obs.What)")
+        }
+        [void]$sb.AppendLine()
+    }
+
+    # Recent Changes
+    if ($Data.ConfigurationHealth.RecentlyInstalled) {
+        $recentSw = $Data.ConfigurationHealth.RecentlyInstalled.Software | Select-Object -First 3
+        $recentUpd = $Data.ConfigurationHealth.RecentlyInstalled.Updates | Select-Object -First 3
+        if ($recentSw.Count -gt 0 -or $recentUpd.Count -gt 0) {
+            [void]$sb.AppendLine("RECENT CHANGES (Last 7 Days)")
+            foreach ($sw in $recentSw) {
+                [void]$sb.AppendLine("  - $($sw.InstallDate): $($sw.Name) installed")
+            }
+            foreach ($upd in $recentUpd) {
+                [void]$sb.AppendLine("  - $($upd.Date): $($upd.Title)")
+            }
+            [void]$sb.AppendLine()
+        }
+    }
+
+    # Footer
+    [void]$sb.AppendLine("────────────────────────────────────────────────────────────")
+    [void]$sb.AppendLine("Scan ID: PULSE_$($Data.Metadata.Hostname)_$($Data.Metadata.ScanTimestamp -replace '[\s:]', '')")
+    [void]$sb.AppendLine("════════════════════════════════════════════════════════════")
+
+    return $sb.ToString()
+}
+
+function Export-MarkdownReport {
+    <#
+    .SYNOPSIS
+        Generates a comprehensive markdown report suitable for ticket attachments
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$Data,
+
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    try {
+        $sb = [System.Text.StringBuilder]::new()
+
+        # Header
+        [void]$sb.AppendLine("# PULSE Diagnostic Report")
+        [void]$sb.AppendLine()
+        [void]$sb.AppendLine("| Field | Value |")
+        [void]$sb.AppendLine("|-------|-------|")
+        [void]$sb.AppendLine("| Hostname | $($Data.Metadata.Hostname) |")
+        [void]$sb.AppendLine("| Scan Time | $($Data.Metadata.ScanTimestamp) |")
+        [void]$sb.AppendLine("| Duration | $($Data.Metadata.ScanDurationSeconds) seconds |")
+        [void]$sb.AppendLine("| Elevated | $($Data.Metadata.IsElevated) |")
+        [void]$sb.AppendLine("| Overall Status | **$($Data.HealthSummary.OverallStatus)** |")
+        [void]$sb.AppendLine()
+
+        # Health Summary
+        [void]$sb.AppendLine("## Health Summary")
+        [void]$sb.AppendLine()
+        if ($Data.HealthSummary.Issues -and $Data.HealthSummary.Issues.Count -gt 0) {
+            [void]$sb.AppendLine("### Issues Detected")
+            foreach ($issue in $Data.HealthSummary.Issues) {
+                [void]$sb.AppendLine("- $issue")
+            }
+            [void]$sb.AppendLine()
+        }
+
+        # Pending Reboot
+        if ($Data.ConfigurationHealth.PendingReboot.IsRebootPending) {
+            [void]$sb.AppendLine("### ⚠️ Reboot Required")
+            [void]$sb.AppendLine()
+            foreach ($reason in $Data.ConfigurationHealth.PendingReboot.Reasons) {
+                [void]$sb.AppendLine("- $reason")
+            }
+            [void]$sb.AppendLine()
+        }
+
+        # System Information
+        [void]$sb.AppendLine("## System Information")
+        [void]$sb.AppendLine()
+
+        if ($Data.SystemInformation.OperatingSystem) {
+            [void]$sb.AppendLine("### Operating System")
+            [void]$sb.AppendLine("| Property | Value |")
+            [void]$sb.AppendLine("|----------|-------|")
+            [void]$sb.AppendLine("| Name | $($Data.SystemInformation.OperatingSystem.Caption) |")
+            [void]$sb.AppendLine("| Build | $($Data.SystemInformation.OperatingSystem.BuildNumber) |")
+            [void]$sb.AppendLine("| Install Date | $($Data.SystemInformation.OperatingSystem.InstallDate) |")
+            [void]$sb.AppendLine("| Uptime | $($Data.SystemInformation.OperatingSystem.UptimeFormatted) |")
+            [void]$sb.AppendLine()
+        }
+
+        if ($Data.SystemInformation.CPU) {
+            [void]$sb.AppendLine("### CPU")
+            [void]$sb.AppendLine("| Property | Value |")
+            [void]$sb.AppendLine("|----------|-------|")
+            [void]$sb.AppendLine("| Name | $($Data.SystemInformation.CPU.Name) |")
+            [void]$sb.AppendLine("| Cores | $($Data.SystemInformation.CPU.Cores) |")
+            [void]$sb.AppendLine("| Logical Processors | $($Data.SystemInformation.CPU.LogicalProcessors) |")
+            [void]$sb.AppendLine()
+        }
+
+        if ($Data.SystemInformation.Memory) {
+            [void]$sb.AppendLine("### Memory")
+            [void]$sb.AppendLine("| Property | Value |")
+            [void]$sb.AppendLine("|----------|-------|")
+            [void]$sb.AppendLine("| Total | $($Data.SystemInformation.Memory.TotalPhysicalGB) GB |")
+            [void]$sb.AppendLine("| Available | $($Data.SystemInformation.Memory.AvailableGB) GB |")
+            [void]$sb.AppendLine("| Used | $($Data.SystemInformation.Memory.UsedPercent)% |")
+            [void]$sb.AppendLine()
+        }
+
+        if ($Data.SystemInformation.Volumes) {
+            [void]$sb.AppendLine("### Storage Volumes")
+            [void]$sb.AppendLine("| Drive | Label | Size | Free | Free % |")
+            [void]$sb.AppendLine("|-------|-------|------|------|--------|")
+            foreach ($vol in $Data.SystemInformation.Volumes) {
+                [void]$sb.AppendLine("| $($vol.DriveLetter) | $($vol.Label) | $($vol.SizeGB) GB | $($vol.FreeSpaceGB) GB | $($vol.FreeSpacePercent)% |")
+            }
+            [void]$sb.AppendLine()
+        }
+
+        # Performance Sampling
+        [void]$sb.AppendLine("## Performance Sampling ($($Data.PerformanceSampling.DurationSeconds) seconds)")
+        [void]$sb.AppendLine()
+
+        if ($Data.PerformanceSampling.CPU.Statistics) {
+            [void]$sb.AppendLine("### CPU")
+            [void]$sb.AppendLine("| Metric | Min | Avg | Max |")
+            [void]$sb.AppendLine("|--------|-----|-----|-----|")
+            [void]$sb.AppendLine("| Processor Time | $($Data.PerformanceSampling.CPU.Statistics.ProcessorTime.Min)% | $($Data.PerformanceSampling.CPU.Statistics.ProcessorTime.Average)% | $($Data.PerformanceSampling.CPU.Statistics.ProcessorTime.Max)% |")
+            [void]$sb.AppendLine("| Queue Length | $($Data.PerformanceSampling.CPU.Statistics.ProcessorQueueLength.Min) | $($Data.PerformanceSampling.CPU.Statistics.ProcessorQueueLength.Average) | $($Data.PerformanceSampling.CPU.Statistics.ProcessorQueueLength.Max) |")
+            [void]$sb.AppendLine()
+        }
+
+        if ($Data.PerformanceSampling.Memory.Statistics) {
+            [void]$sb.AppendLine("### Memory")
+            [void]$sb.AppendLine("| Metric | Min | Avg | Max |")
+            [void]$sb.AppendLine("|--------|-----|-----|-----|")
+            [void]$sb.AppendLine("| Available MB | $($Data.PerformanceSampling.Memory.Statistics.AvailableMB.Min) | $($Data.PerformanceSampling.Memory.Statistics.AvailableMB.Average) | $($Data.PerformanceSampling.Memory.Statistics.AvailableMB.Max) |")
+            [void]$sb.AppendLine("| Hard Faults/sec | $($Data.PerformanceSampling.Memory.Statistics.HardFaultsPerSec.Min) | $($Data.PerformanceSampling.Memory.Statistics.HardFaultsPerSec.Average) | $($Data.PerformanceSampling.Memory.Statistics.HardFaultsPerSec.Max) |")
+            [void]$sb.AppendLine()
+        }
+
+        if ($Data.PerformanceSampling.Disk.Statistics) {
+            [void]$sb.AppendLine("### Disk")
+            [void]$sb.AppendLine("| Metric | Min | Avg | Max |")
+            [void]$sb.AppendLine("|--------|-----|-----|-----|")
+            [void]$sb.AppendLine("| Read Latency (ms) | $($Data.PerformanceSampling.Disk.Statistics.ReadLatencyMs.Min) | $($Data.PerformanceSampling.Disk.Statistics.ReadLatencyMs.Average) | $($Data.PerformanceSampling.Disk.Statistics.ReadLatencyMs.Max) |")
+            [void]$sb.AppendLine("| Write Latency (ms) | $($Data.PerformanceSampling.Disk.Statistics.WriteLatencyMs.Min) | $($Data.PerformanceSampling.Disk.Statistics.WriteLatencyMs.Average) | $($Data.PerformanceSampling.Disk.Statistics.WriteLatencyMs.Max) |")
+            [void]$sb.AppendLine("| Queue Length | $($Data.PerformanceSampling.Disk.Statistics.QueueLength.Min) | $($Data.PerformanceSampling.Disk.Statistics.QueueLength.Average) | $($Data.PerformanceSampling.Disk.Statistics.QueueLength.Max) |")
+            [void]$sb.AppendLine()
+        }
+
+        if ($Data.PerformanceSampling.InterruptDPC.Statistics) {
+            [void]$sb.AppendLine("### DPC/Interrupt")
+            [void]$sb.AppendLine("| Metric | Min | Avg | Max |")
+            [void]$sb.AppendLine("|--------|-----|-----|-----|")
+            [void]$sb.AppendLine("| DPC Time | $($Data.PerformanceSampling.InterruptDPC.Statistics.DPCTime.Min)% | $($Data.PerformanceSampling.InterruptDPC.Statistics.DPCTime.Average)% | $($Data.PerformanceSampling.InterruptDPC.Statistics.DPCTime.Max)% |")
+            [void]$sb.AppendLine("| Interrupt Time | $($Data.PerformanceSampling.InterruptDPC.Statistics.InterruptTime.Min)% | $($Data.PerformanceSampling.InterruptDPC.Statistics.InterruptTime.Average)% | $($Data.PerformanceSampling.InterruptDPC.Statistics.InterruptTime.Max)% |")
+            [void]$sb.AppendLine("| Combined | $($Data.PerformanceSampling.InterruptDPC.Statistics.CombinedTime.Min)% | $($Data.PerformanceSampling.InterruptDPC.Statistics.CombinedTime.Average)% | $($Data.PerformanceSampling.InterruptDPC.Statistics.CombinedTime.Max)% |")
+            [void]$sb.AppendLine()
+        }
+
+        # Top Processes
+        if ($Data.ProcessAnalysis.TopByMemory) {
+            [void]$sb.AppendLine("### Top Processes by Memory")
+            [void]$sb.AppendLine("| Process | PID | Working Set | Private Memory |")
+            [void]$sb.AppendLine("|---------|-----|-------------|----------------|")
+            foreach ($proc in $Data.ProcessAnalysis.TopByMemory | Select-Object -First 10) {
+                [void]$sb.AppendLine("| $($proc.Name) | $($proc.PID) | $($proc.WorkingSetMB) MB | $($proc.PrivateMemoryMB) MB |")
+            }
+            [void]$sb.AppendLine()
+        }
+
+        # Observations
+        if ($Data.ProcessAnalysis.Observations -and $Data.ProcessAnalysis.Observations.Count -gt 0) {
+            [void]$sb.AppendLine("## Observations")
+            [void]$sb.AppendLine()
+            foreach ($obs in $Data.ProcessAnalysis.Observations) {
+                [void]$sb.AppendLine("### $($obs.Category): $($obs.Process)")
+                [void]$sb.AppendLine("- **What:** $($obs.What)")
+                [void]$sb.AppendLine("- **Context:** $($obs.Why)")
+                [void]$sb.AppendLine("- **Possible Action:** $($obs.Action)")
+                [void]$sb.AppendLine()
+            }
+        }
+
+        # Browser Analysis
+        [void]$sb.AppendLine("## Browser Analysis")
+        [void]$sb.AppendLine()
+
+        if ($Data.BrowserAnalysis.Chrome) {
+            [void]$sb.AppendLine("### Chrome")
+            [void]$sb.AppendLine("| Property | Value |")
+            [void]$sb.AppendLine("|----------|-------|")
+            [void]$sb.AppendLine("| Running | $(if ($Data.BrowserAnalysis.Chrome.IsRunning) { 'Yes' } else { 'No' }) |")
+            if ($Data.BrowserAnalysis.Chrome.IsRunning) {
+                [void]$sb.AppendLine("| Processes | $($Data.BrowserAnalysis.Chrome.ProcessCount) |")
+                [void]$sb.AppendLine("| Memory | $($Data.BrowserAnalysis.Chrome.TotalMemoryMB) MB |")
+            }
+            [void]$sb.AppendLine("| Extensions | $($Data.BrowserAnalysis.Chrome.ExtensionCount) |")
+            [void]$sb.AppendLine()
+
+            if ($Data.BrowserAnalysis.Chrome.Extensions -and $Data.BrowserAnalysis.Chrome.Extensions.Count -gt 0) {
+                [void]$sb.AppendLine("#### Chrome Extensions")
+                foreach ($ext in $Data.BrowserAnalysis.Chrome.Extensions) {
+                    [void]$sb.AppendLine("- $($ext.Name) (v$($ext.Version))")
+                }
+                [void]$sb.AppendLine()
+            }
+        }
+
+        if ($Data.BrowserAnalysis.Edge) {
+            [void]$sb.AppendLine("### Edge")
+            [void]$sb.AppendLine("| Property | Value |")
+            [void]$sb.AppendLine("|----------|-------|")
+            [void]$sb.AppendLine("| Running | $(if ($Data.BrowserAnalysis.Edge.IsRunning) { 'Yes' } else { 'No' }) |")
+            if ($Data.BrowserAnalysis.Edge.IsRunning) {
+                [void]$sb.AppendLine("| Processes | $($Data.BrowserAnalysis.Edge.ProcessCount) |")
+                [void]$sb.AppendLine("| Memory | $($Data.BrowserAnalysis.Edge.TotalMemoryMB) MB |")
+            }
+            [void]$sb.AppendLine("| Extensions | $($Data.BrowserAnalysis.Edge.ExtensionCount) |")
+            [void]$sb.AppendLine()
+
+            if ($Data.BrowserAnalysis.Edge.Extensions -and $Data.BrowserAnalysis.Edge.Extensions.Count -gt 0) {
+                [void]$sb.AppendLine("#### Edge Extensions")
+                foreach ($ext in $Data.BrowserAnalysis.Edge.Extensions) {
+                    [void]$sb.AppendLine("- $($ext.Name) (v$($ext.Version))")
+                }
+                [void]$sb.AppendLine()
+            }
+        }
+
+        # Configuration Health
+        [void]$sb.AppendLine("## Configuration Health")
+        [void]$sb.AppendLine()
+
+        # Intune
+        if ($Data.ConfigurationHealth.IntuneEnrollment) {
+            [void]$sb.AppendLine("### Intune Enrollment")
+            [void]$sb.AppendLine("| Property | Value |")
+            [void]$sb.AppendLine("|----------|-------|")
+            [void]$sb.AppendLine("| Enrolled | $(if ($Data.ConfigurationHealth.IntuneEnrollment.IsEnrolled) { 'Yes' } else { 'No' }) |")
+            if ($Data.ConfigurationHealth.IntuneEnrollment.IsEnrolled) {
+                [void]$sb.AppendLine("| UPN | $($Data.ConfigurationHealth.IntuneEnrollment.UPN) |")
+                if ($Data.ConfigurationHealth.IntuneEnrollment.LastSyncTime) {
+                    [void]$sb.AppendLine("| Last Sync | $($Data.ConfigurationHealth.IntuneEnrollment.LastSyncTime) ($($Data.ConfigurationHealth.IntuneEnrollment.LastSyncAgo)) |")
+                }
+            }
+            [void]$sb.AppendLine()
+        }
+
+        # Recently Installed
+        if ($Data.ConfigurationHealth.RecentlyInstalled) {
+            [void]$sb.AppendLine("### Recently Installed (Last 7 Days)")
+            [void]$sb.AppendLine()
+
+            if ($Data.ConfigurationHealth.RecentlyInstalled.Software.Count -gt 0) {
+                [void]$sb.AppendLine("#### Software")
+                [void]$sb.AppendLine("| Name | Version | Install Date | Publisher |")
+                [void]$sb.AppendLine("|------|---------|--------------|-----------|")
+                foreach ($sw in $Data.ConfigurationHealth.RecentlyInstalled.Software) {
+                    [void]$sb.AppendLine("| $($sw.Name) | $($sw.Version) | $($sw.InstallDate) | $($sw.Publisher) |")
+                }
+                [void]$sb.AppendLine()
+            }
+
+            if ($Data.ConfigurationHealth.RecentlyInstalled.Updates.Count -gt 0) {
+                [void]$sb.AppendLine("#### Windows Updates")
+                [void]$sb.AppendLine("| Title | Date | Type |")
+                [void]$sb.AppendLine("|-------|------|------|")
+                foreach ($upd in $Data.ConfigurationHealth.RecentlyInstalled.Updates) {
+                    [void]$sb.AppendLine("| $($upd.Title) | $($upd.Date) | $($upd.Type) |")
+                }
+                [void]$sb.AppendLine()
+            }
+        }
+
+        # User Profile
+        if ($Data.ConfigurationHealth.UserProfile) {
+            [void]$sb.AppendLine("### User Profile")
+            [void]$sb.AppendLine("| Property | Value |")
+            [void]$sb.AppendLine("|----------|-------|")
+            [void]$sb.AppendLine("| Path | $($Data.ConfigurationHealth.UserProfile.Path) |")
+            [void]$sb.AppendLine("| Total Size | $($Data.ConfigurationHealth.UserProfile.TotalSizeGB) GB |")
+            [void]$sb.AppendLine()
+
+            if ($Data.ConfigurationHealth.UserProfile.LargestFolders) {
+                [void]$sb.AppendLine("#### Largest Folders")
+                [void]$sb.AppendLine("| Folder | Size |")
+                [void]$sb.AppendLine("|--------|------|")
+                foreach ($folder in $Data.ConfigurationHealth.UserProfile.LargestFolders) {
+                    [void]$sb.AppendLine("| $($folder.Folder) | $($folder.SizeGB) GB |")
+                }
+                [void]$sb.AppendLine()
+            }
+        }
+
+        # Startup Programs
+        if ($Data.ConfigurationHealth.StartupPrograms) {
+            [void]$sb.AppendLine("### Startup Programs ($($Data.ConfigurationHealth.StartupPrograms.TotalCount) items)")
+            [void]$sb.AppendLine("| Name | Location | Scope | Type |")
+            [void]$sb.AppendLine("|------|----------|-------|------|")
+            foreach ($item in $Data.ConfigurationHealth.StartupPrograms.Items) {
+                [void]$sb.AppendLine("| $($item.Name) | $($item.Location) | $($item.Scope) | $($item.Type) |")
+            }
+            [void]$sb.AppendLine()
+        }
+
+        # Event Log Summary
+        if ($Data.EventLogSummary.Summary) {
+            [void]$sb.AppendLine("## Event Log Summary (Last $($Data.EventLogSummary.TimeRange.HoursScanned) Hours)")
+            [void]$sb.AppendLine()
+            [void]$sb.AppendLine("| Event Type | Count |")
+            [void]$sb.AppendLine("|------------|-------|")
+            [void]$sb.AppendLine("| Disk Events | $($Data.EventLogSummary.Summary.TotalDiskEvents) |")
+            [void]$sb.AppendLine("| Kernel/Driver Errors | $($Data.EventLogSummary.Summary.TotalKernelErrors) |")
+            [void]$sb.AppendLine("| Application Crashes | $($Data.EventLogSummary.Summary.TotalAppCrashes) |")
+            [void]$sb.AppendLine("| Update Failures | $($Data.EventLogSummary.Summary.TotalUpdateFailures) |")
+            [void]$sb.AppendLine("| Browser Crashes | $($Data.EventLogSummary.Summary.TotalBrowserCrashes) |")
+            [void]$sb.AppendLine()
+        }
+
+        # Footer
+        [void]$sb.AppendLine("---")
+        [void]$sb.AppendLine("*Report generated by PULSE v$($Data.Metadata.ScriptVersion)*")
+
+        $sb.ToString() | Out-File -FilePath $Path -Encoding UTF8 -Force
+        Write-Log -Message "Markdown report saved: $Path" -Level Success
+        return $true
+    }
+    catch {
+        Add-InternalError -Module "Export" -Message "Failed to save Markdown report" -ErrorRecord $_
         return $false
     }
 }
@@ -2250,52 +3032,52 @@ function Export-HtmlReport {
             </div>
         </header>
 
-        <!-- Health Summary Cards -->
+        <!-- Health Summary Cards - Only showing metrics with documented thresholds -->
         <div class="health-summary">
             $(
                 $healthItems = @()
 
-                # CPU Health
+                # Pending Reboot - Clear signal that needs addressing
+                if ($Data.ConfigurationHealth.PendingReboot) {
+                    $rebootStatus = if ($Data.ConfigurationHealth.PendingReboot.IsRebootPending) { "fail" } else { "pass" }
+                    $rebootText = if ($Data.ConfigurationHealth.PendingReboot.IsRebootPending) { "YES" } else { "No" }
+                    $healthItems += "<div class='health-card $rebootStatus'><h3>Reboot Pending</h3><div class='value'>$rebootText</div><span class='status $rebootStatus'>$($rebootStatus.ToUpper())</span></div>"
+                }
+
+                # CPU Health - Microsoft docs: sustained >80% indicates bottleneck
                 if ($Data.PerformanceSampling.CPU.Statistics) {
                     $cpuAvg = $Data.PerformanceSampling.CPU.Statistics.ProcessorTime.Average
-                    $cpuStatus = if ($cpuAvg -lt 70) { "pass" } elseif ($cpuAvg -lt 90) { "warning" } else { "fail" }
+                    $cpuStatus = if ($cpuAvg -lt 80) { "pass" } elseif ($cpuAvg -lt 90) { "warning" } else { "fail" }
                     $healthItems += "<div class='health-card $cpuStatus'><h3>CPU Average</h3><div class='value'>$cpuAvg%</div><span class='status $cpuStatus'>$($cpuStatus.ToUpper())</span></div>"
                 }
 
-                # Memory Health
+                # Memory Health - >90% means active paging, measurable degradation
                 if ($Data.SystemInformation.Memory) {
                     $memUsed = $Data.SystemInformation.Memory.UsedPercent
-                    $memStatus = if ($memUsed -lt 80) { "pass" } elseif ($memUsed -lt 95) { "warning" } else { "fail" }
+                    $memStatus = if ($memUsed -lt 85) { "pass" } elseif ($memUsed -lt 90) { "warning" } else { "fail" }
                     $healthItems += "<div class='health-card $memStatus'><h3>Memory Used</h3><div class='value'>$memUsed%</div><span class='status $memStatus'>$($memStatus.ToUpper())</span></div>"
                 }
 
-                # Disk Health
+                # Disk Space - Windows shows red bar at <10%, documented threshold
                 if ($Data.SystemInformation.Volumes) {
                     $lowestFree = ($Data.SystemInformation.Volumes | Sort-Object FreeSpacePercent | Select-Object -First 1).FreeSpacePercent
-                    $diskStatus = if ($lowestFree -gt 20) { "pass" } elseif ($lowestFree -gt 10) { "warning" } else { "fail" }
+                    $diskStatus = if ($lowestFree -gt 15) { "pass" } elseif ($lowestFree -gt 10) { "warning" } else { "fail" }
                     $healthItems += "<div class='health-card $diskStatus'><h3>Disk Free (Min)</h3><div class='value'>$lowestFree%</div><span class='status $diskStatus'>$($diskStatus.ToUpper())</span></div>"
                 }
 
-                # Network Health
-                if ($Data.PerformanceSampling.Network.Statistics) {
-                    $totalErrors = 0
-                    foreach ($adapter in $Data.PerformanceSampling.Network.Statistics.Keys) {
-                        $totalErrors += $Data.PerformanceSampling.Network.Statistics[$adapter].Errors.Max
-                    }
-                    $networkStatus = if ($totalErrors -eq 0) { "pass" } elseif ($totalErrors -lt 10) { "warning" } else { "fail" }
-                    $healthItems += "<div class='health-card $networkStatus'><h3>Network Errors</h3><div class='value'>$totalErrors</div><span class='status $networkStatus'>$($networkStatus.ToUpper())</span></div>"
-                }
-
-                # Disk Latency Health
+                # Disk Latency - Microsoft docs: >50ms is "extremely underperforming"
                 if ($Data.PerformanceSampling.Disk.Statistics) {
                     $avgLatency = [math]::Max($Data.PerformanceSampling.Disk.Statistics.ReadLatencyMs.Average, $Data.PerformanceSampling.Disk.Statistics.WriteLatencyMs.Average)
-                    $latencyStatus = if ($avgLatency -lt 20) { "pass" } elseif ($avgLatency -lt 50) { "warning" } else { "fail" }
+                    $latencyStatus = if ($avgLatency -lt 25) { "pass" } elseif ($avgLatency -lt 50) { "warning" } else { "fail" }
                     $healthItems += "<div class='health-card $latencyStatus'><h3>Disk Latency</h3><div class='value'>$([math]::Round($avgLatency, 1)) ms</div><span class='status $latencyStatus'>$($latencyStatus.ToUpper())</span></div>"
                 }
 
-                # NOTE: Intune enrollment, Windows Update, and Event Errors are shown in their respective
-                # sections below but are not included as top-line health indicators since they don't
-                # directly indicate current performance issues.
+                # DPC/ISR Time - Microsoft docs: >30% indicates driver/hardware issue
+                if ($Data.PerformanceSampling.InterruptDPC.Statistics.CombinedTime) {
+                    $dpcIsr = $Data.PerformanceSampling.InterruptDPC.Statistics.CombinedTime.Average
+                    $dpcStatus = if ($dpcIsr -lt 15) { "pass" } elseif ($dpcIsr -lt 30) { "warning" } else { "fail" }
+                    $healthItems += "<div class='health-card $dpcStatus'><h3>DPC/ISR Time</h3><div class='value'>$([math]::Round($dpcIsr, 1))%</div><span class='status $dpcStatus'>$($dpcStatus.ToUpper())</span></div>"
+                }
 
                 $healthItems -join "`n"
             )
@@ -2619,17 +3401,17 @@ function Export-HtmlReport {
                 </div>
 "@ })
 
-                <!-- Actionable Issues -->
-                $(if ($Data.ProcessAnalysis.PotentialIssues -and $Data.ProcessAnalysis.PotentialIssues.Count -gt 0) { @"
+                <!-- Observations -->
+                $(if ($Data.ProcessAnalysis.Observations -and $Data.ProcessAnalysis.Observations.Count -gt 0) { @"
                 <div class="subsection">
-                    <h3>Actionable Issues</h3>
-                    $($Data.ProcessAnalysis.PotentialIssues | ForEach-Object { @"
-                    <div class="issue-card" style="background: #f8f9fa; border-left: 4px solid $(if ($_.Severity -eq 'High') { '#dc3545' } elseif ($_.Severity -eq 'Medium') { '#ffc107' } else { '#17a2b8' }); padding: 15px; margin-bottom: 15px; border-radius: 4px;">
+                    <h3>Observations</h3>
+                    <p style="color: #6c757d; margin-bottom: 15px;">These are observations that may be relevant to performance. Use your judgment to determine if they apply to the user's issue.</p>
+                    $($Data.ProcessAnalysis.Observations | ForEach-Object { @"
+                    <div class="issue-card" style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 15px; margin-bottom: 15px; border-radius: 4px;">
                         <div style="font-weight: bold; font-size: 1.1em; margin-bottom: 8px;">$($_.Category): $($_.Process)</div>
                         <div style="margin-bottom: 8px;"><strong>What:</strong> $($_.What)</div>
-                        <div style="margin-bottom: 8px;"><strong>Why it matters:</strong> $($_.Why)</div>
-                        <div style="margin-bottom: 8px; color: #28a745;"><strong>Recommended action:</strong> $($_.Action)</div>
-                        <div style="font-size: 0.9em; color: #6c757d; border-top: 1px solid #dee2e6; padding-top: 8px; margin-top: 8px;"><strong>For Engineering:</strong> $($_.EnvironmentalNote)</div>
+                        <div style="margin-bottom: 8px;"><strong>Context:</strong> $($_.Why)</div>
+                        <div style="margin-bottom: 8px;"><strong>Possible action:</strong> $($_.Action)</div>
                     </div>
 "@ })
                 </div>
@@ -2686,6 +3468,52 @@ function Export-HtmlReport {
 "@ })
 "@ })
                 </div>
+
+                <!-- Chrome Extensions List -->
+                $(if ($Data.BrowserAnalysis.Chrome.Extensions -and $Data.BrowserAnalysis.Chrome.Extensions.Count -gt 0) { @"
+                <div class="subsection">
+                    <h3>Chrome Extensions ($($Data.BrowserAnalysis.Chrome.Extensions.Count))</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Extension Name</th>
+                                <th>Version</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            $($Data.BrowserAnalysis.Chrome.Extensions | ForEach-Object { @"
+                            <tr>
+                                <td>$($_.Name)</td>
+                                <td>$($_.Version)</td>
+                            </tr>
+"@ })
+                        </tbody>
+                    </table>
+                </div>
+"@ })
+
+                <!-- Edge Extensions List -->
+                $(if ($Data.BrowserAnalysis.Edge.Extensions -and $Data.BrowserAnalysis.Edge.Extensions.Count -gt 0) { @"
+                <div class="subsection">
+                    <h3>Edge Extensions ($($Data.BrowserAnalysis.Edge.Extensions.Count))</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Extension Name</th>
+                                <th>Version</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            $($Data.BrowserAnalysis.Edge.Extensions | ForEach-Object { @"
+                            <tr>
+                                <td>$($_.Name)</td>
+                                <td>$($_.Version)</td>
+                            </tr>
+"@ })
+                        </tbody>
+                    </table>
+                </div>
+"@ })
             </div>
         </div>
 
@@ -2696,7 +3524,24 @@ function Export-HtmlReport {
                 <span class="toggle">&#9660;</span>
             </div>
             <div class="section-content">
+                <!-- Pending Reboot Alert -->
+                $(if ($Data.ConfigurationHealth.PendingReboot -and $Data.ConfigurationHealth.PendingReboot.IsRebootPending) { @"
+                <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                    <h3 style="color: #856404; margin-bottom: 10px;">&#9888; Reboot Required</h3>
+                    <p style="margin-bottom: 10px;">This system requires a restart. This is often the cause of performance issues and unexpected behavior.</p>
+                    <ul style="margin: 0; padding-left: 20px;">
+                        $($Data.ConfigurationHealth.PendingReboot.Reasons | ForEach-Object { "<li>$_</li>" })
+                    </ul>
+                </div>
+"@ })
+
                 <div class="metric-grid">
+                    $(if ($Data.ConfigurationHealth.PendingReboot) { @"
+                    <div class="metric-item">
+                        <label>Reboot Pending</label>
+                        <div class="value" style="color: $(if ($Data.ConfigurationHealth.PendingReboot.IsRebootPending) { '#dc3545' } else { '#28a745' })">$(if ($Data.ConfigurationHealth.PendingReboot.IsRebootPending) { "YES - Restart Needed" } else { "No" })</div>
+                    </div>
+"@ })
                     $(if ($Data.ConfigurationHealth.IntuneEnrollment) { @"
                     <div class="metric-item">
                         <label>Intune Enrolled</label>
@@ -2705,7 +3550,7 @@ function Export-HtmlReport {
                     $(if ($Data.ConfigurationHealth.IntuneEnrollment.LastSyncTime) { @"
                     <div class="metric-item">
                         <label>Last Intune Sync</label>
-                        <div class="value">$($Data.ConfigurationHealth.IntuneEnrollment.LastSyncTime)</div>
+                        <div class="value">$(if ($Data.ConfigurationHealth.IntuneEnrollment.LastSyncAgo) { "$($Data.ConfigurationHealth.IntuneEnrollment.LastSyncAgo) ($($Data.ConfigurationHealth.IntuneEnrollment.LastSyncTime))" } else { $Data.ConfigurationHealth.IntuneEnrollment.LastSyncTime })</div>
                     </div>
 "@ })
 "@ })
@@ -2729,6 +3574,12 @@ function Export-HtmlReport {
                     <div class="metric-item">
                         <label>Domain GPO Detected</label>
                         <div class="value">$(if ($Data.ConfigurationHealth.GPOCheck.HasDomainGPO) { "Yes (Warning)" } else { "No" })</div>
+                    </div>
+"@ })
+                    $(if ($Data.ConfigurationHealth.UserProfile) { @"
+                    <div class="metric-item">
+                        <label>User Profile Size</label>
+                        <div class="value">$($Data.ConfigurationHealth.UserProfile.TotalSizeGB) GB</div>
                     </div>
 "@ })
                 </div>
@@ -2760,13 +3611,85 @@ function Export-HtmlReport {
                 </div>
 "@ })
 
+                <!-- Recently Installed -->
+                $(if ($Data.ConfigurationHealth.RecentlyInstalled -and ($Data.ConfigurationHealth.RecentlyInstalled.SoftwareCount -gt 0 -or $Data.ConfigurationHealth.RecentlyInstalled.UpdateCount -gt 0)) { @"
+                <div class="subsection">
+                    <h3>Recently Installed (Last 7 Days)</h3>
+                    <p style="color: #6c757d; margin-bottom: 15px;">If the user reports "it was working fine until recently", check these installations.</p>
+                    $(if ($Data.ConfigurationHealth.RecentlyInstalled.Software.Count -gt 0) { @"
+                    <h4 style="margin: 15px 0 10px 0; font-size: 0.95em;">Software ($($Data.ConfigurationHealth.RecentlyInstalled.SoftwareCount) items)</h4>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Version</th>
+                                <th>Install Date</th>
+                                <th>Publisher</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            $($Data.ConfigurationHealth.RecentlyInstalled.Software | Select-Object -First 15 | ForEach-Object { @"
+                            <tr>
+                                <td>$($_.Name)</td>
+                                <td>$($_.Version)</td>
+                                <td>$($_.InstallDate)</td>
+                                <td>$($_.Publisher)</td>
+                            </tr>
+"@ })
+                        </tbody>
+                    </table>
+"@ })
+                    $(if ($Data.ConfigurationHealth.RecentlyInstalled.Updates.Count -gt 0) { @"
+                    <h4 style="margin: 15px 0 10px 0; font-size: 0.95em;">Windows Updates ($($Data.ConfigurationHealth.RecentlyInstalled.UpdateCount) items)</h4>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>Date</th>
+                                <th>Type</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            $($Data.ConfigurationHealth.RecentlyInstalled.Updates | Select-Object -First 10 | ForEach-Object { @"
+                            <tr>
+                                <td>$($_.Title)</td>
+                                <td>$($_.Date)</td>
+                                <td>$($_.Type)</td>
+                            </tr>
+"@ })
+                        </tbody>
+                    </table>
+"@ })
+                </div>
+"@ })
+
+                <!-- User Profile Size -->
+                $(if ($Data.ConfigurationHealth.UserProfile -and $Data.ConfigurationHealth.UserProfile.LargestFolders) { @"
+                <div class="subsection">
+                    <h3>User Profile ($($Data.ConfigurationHealth.UserProfile.TotalSizeGB) GB total)</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Folder</th>
+                                <th>Size (GB)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            $($Data.ConfigurationHealth.UserProfile.LargestFolders | ForEach-Object { @"
+                            <tr>
+                                <td>$($_.Folder)</td>
+                                <td>$($_.SizeGB)</td>
+                            </tr>
+"@ })
+                        </tbody>
+                    </table>
+                </div>
+"@ })
+
                 <!-- Startup Programs -->
                 $(if ($Data.ConfigurationHealth.StartupPrograms) { @"
                 <div class="subsection">
                     <h3>Startup Programs ($($Data.ConfigurationHealth.StartupPrograms.TotalCount) items)</h3>
-                    $(if ($Data.ConfigurationHealth.StartupPrograms.Note) { @"
-                    <p style="color: #f0ad4e; margin-bottom: 10px;">$($Data.ConfigurationHealth.StartupPrograms.Note)</p>
-"@ })
                     <table>
                         <thead>
                             <tr>
@@ -3037,29 +3960,8 @@ function Invoke-PULSE {
         Set-WorstStatus -NewStatus "Fail"
     }
 
-    # Process: Check for high-severity actionable issues
-    $highSeverityIssues = $Script:Results.ProcessAnalysis.PotentialIssues | Where-Object { $_.Severity -eq "High" }
-    if ($highSeverityIssues.Count -gt 0) {
-        foreach ($issue in $highSeverityIssues) {
-            [void]$issues.Add("$($issue.Category): $($issue.Process)")
-        }
-        Set-WorstStatus -NewStatus "Warning"
-    }
-
-    # Network: Errors during sampling indicate connectivity issues
-    $totalNetworkErrors = 0
-    if ($Script:Results.PerformanceSampling.Network.Statistics) {
-        foreach ($adapter in $Script:Results.PerformanceSampling.Network.Statistics.Keys) {
-            $totalNetworkErrors += $Script:Results.PerformanceSampling.Network.Statistics[$adapter].Errors.Max
-        }
-    }
-    if ($totalNetworkErrors -gt 10) {
-        [void]$issues.Add("Network errors detected ($totalNetworkErrors)")
-        Set-WorstStatus -NewStatus "Warning"
-    }
-
     # DPC/ISR: High interrupt processing time indicates driver issues
-    # Microsoft threshold: >15% combined DPC+Interrupt time is concerning
+    # Microsoft documented threshold: >30% combined DPC+Interrupt time indicates driver/hardware issue
     $combinedDpcIsr = $Script:Results.PerformanceSampling.InterruptDPC.Statistics.CombinedTime.Average
     if ($combinedDpcIsr -gt 30) {
         [void]$issues.Add("High DPC/Interrupt time ($([math]::Round($combinedDpcIsr, 1))%) - potential driver issue")
@@ -3080,6 +3982,21 @@ function Invoke-PULSE {
 
     $jsonSuccess = Export-JsonReport -Data $Script:Results -Path $Script:Config.JsonPath
     $htmlSuccess = Export-HtmlReport -Data $Script:Results -Path $Script:Config.HtmlPath -JsonPath $Script:Config.JsonPath
+
+    # Generate markdown report for ticket attachments
+    $markdownPath = $Script:Config.JsonPath -replace '\.json$', '.md'
+    $markdownSuccess = Export-MarkdownReport -Data $Script:Results -Path $markdownPath
+
+    # Generate work note summary and copy to clipboard
+    $workNoteSummary = Get-WorkNoteSummary -Data $Script:Results
+    try {
+        $workNoteSummary | Set-Clipboard -ErrorAction Stop
+        $clipboardSuccess = $true
+    }
+    catch {
+        $clipboardSuccess = $false
+        Add-InternalError -Module "Export" -Message "Failed to copy summary to clipboard" -ErrorRecord $_
+    }
 
     # Write error log if there were any internal errors
     if ($Script:InternalErrors.Count -gt 0) {
@@ -3112,10 +4029,19 @@ function Invoke-PULSE {
 
     Write-Host ""
     Write-Host "Reports saved to:" -ForegroundColor White
-    if ($jsonSuccess) { Write-Host "  JSON: $($Script:Config.JsonPath)" -ForegroundColor Green }
+    if ($jsonSuccess) { Write-Host "  JSON: $($Script:Config.JsonPath)" -ForegroundColor Gray }
     if ($htmlSuccess) { Write-Host "  HTML: $($Script:Config.HtmlPath)" -ForegroundColor Green }
+    if ($markdownSuccess) { Write-Host "  Markdown: $markdownPath" -ForegroundColor Green }
     if ($Script:InternalErrors.Count -gt 0) {
         Write-Host "  Errors: $($Script:Config.ErrorLogPath)" -ForegroundColor Yellow
+    }
+
+    Write-Host ""
+    if ($clipboardSuccess) {
+        Write-Host "Work note summary copied to clipboard - ready to paste into ServiceNow!" -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "Note: Could not copy summary to clipboard" -ForegroundColor Yellow
     }
     Write-Host ""
 
