@@ -38,11 +38,12 @@ PULSE collects detailed system performance data over a configurable sampling per
 |---------|-------------|
 | Hardware Inventory | CPU, memory, disk, BIOS, TPM information |
 | Performance Sampling | 60-second collection of CPU, memory, disk, and network metrics |
-| Process Analysis | Top processes by CPU, memory, disk I/O; issue detection |
-| Browser Analysis | Chrome/Edge detailed analysis; Chrome/Edge/Firefox memory monitoring |
-| Configuration Health | Page file, Windows Update, Intune enrollment, GPO checks |
+| Process Analysis | Top processes by CPU, memory, disk I/O; contextual observations |
+| Browser Analysis | Chrome/Edge resource usage, extension names and versions |
+| Configuration Health | Pending reboot detection, recent installs, page file, Windows Update, Intune sync, user profile size, startup programs |
 | Event Log Analysis | 48-hour scan for errors, crashes, and failures |
-| Dual Output | JSON (structured data) and HTML (visual report) |
+| ServiceNow Integration | Work note summary auto-copied to clipboard; markdown report for attachments |
+| Multi-Format Output | JSON (data), HTML (visual), Markdown (ticket attachment) |
 
 ## Requirements
 
@@ -194,15 +195,19 @@ Analyzes Chrome and Edge browser resource usage. Firefox memory usage is monitor
 
 **Function:** `Get-ConfigurationHealth`
 
-Checks system configuration and policy health.
+Checks system configuration and collects diagnostic data.
 
-| Check | Description | Health Indicator |
-|-------|-------------|------------------|
-| Page file | Configuration and usage | Usage % |
-| Windows Update | Pending updates, history | Pending count |
-| Intune enrollment | MDM status, last sync | Enrollment state |
-| Company Portal | Installation, service status | Service running |
-| GPO remnants | Domain policy detection | Cloud-only check |
+| Check | Description |
+|-------|-------------|
+| Pending Reboot | CBS, Windows Update, file rename operations, computer rename, SCCM client |
+| Recently Installed | Software and Windows Updates from last 7 days |
+| Page File | Configuration and current usage |
+| Windows Update | Pending updates count |
+| Intune Enrollment | MDM status, UPN, last sync time with human-readable "X days ago" |
+| Company Portal | Installation and service status |
+| GPO Remnants | Domain policy detection for cloud-only environments |
+| User Profile | Total size and largest folders breakdown |
+| Startup Programs | Name, location, scope, type |
 
 ### 6. Event Log Summary Module
 
@@ -224,14 +229,27 @@ Scans event logs for significant events (default: last 48 hours).
 ### File Naming Convention
 
 ```
-PULSE_<hostname>_<yyyyMMdd-HHmmss>.json
-PULSE_<hostname>_<yyyyMMdd-HHmmss>.html
-PULSE_<hostname>_<yyyyMMdd-HHmmss>_errors.log
+PULSE_<hostname>_<yyyyMMdd-HHmmss>.json      # Structured data
+PULSE_<hostname>_<yyyyMMdd-HHmmss>.html      # Visual report for technician
+PULSE_<hostname>_<yyyyMMdd-HHmmss>.md        # Comprehensive markdown for ticket attachments
+PULSE_<hostname>_<yyyyMMdd-HHmmss>_errors.log # Internal errors (if any)
 ```
 
 ### Output Location
 
 Default: `C:\ProgramData\PULSE\`
+
+### ServiceNow Integration
+
+When the scan completes, a brief work note summary is automatically copied to the clipboard. Technicians can immediately paste (Ctrl+V) into ServiceNow work notes. The summary includes:
+- Health status and key metrics
+- System info (OS, CPU, RAM, uptime)
+- Intune enrollment and sync status
+- Observations (if any)
+- Recent changes (last 7 days)
+- Scan ID for audit trail
+
+For detailed documentation, attach the `.md` markdown file to the ticket.
 
 ### JSON Schema
 
@@ -262,10 +280,13 @@ Default: `C:\ProgramData\PULSE\`
 
 ### HTML Report Features
 
-- Color-coded health indicators (Pass/Warning/Fail)
+- Color-coded health indicators (Pass/Warning/Fail) for documented thresholds only
+- Prominent pending reboot alert when restart is needed
 - Collapsible sections for easy navigation
 - Summary cards for quick status overview
 - Detailed tables for drill-down analysis
+- Browser extension lists with names
+- Recently installed software/updates section
 - Link to JSON file for raw data access
 - Mobile-responsive design
 
@@ -427,33 +448,35 @@ Review the `*_errors.log` file in the output directory for any collection failur
 
 **Quick reference** for technicians. For detailed threshold documentation with sources, see [Performance Thresholds Reference](#performance-thresholds-reference).
 
+### Health Status Philosophy
+
+PULSE only flags metrics with **documented Microsoft thresholds**. Informational data (startup programs, profile size, browser extensions, Intune sync age) is presented neutrally without Pass/Warning/Fail judgments - technicians apply their own judgment based on context.
+
 ### Health Summary Checks
 
-These checks determine the overall **Pass / Warning / Fail** status. Only performance-related metrics affect this status.
+These checks determine the overall **Pass / Warning / Fail** status.
 
-| Check | Warning Trigger | Fail Trigger |
-|-------|-----------------|--------------|
-| CPU Usage | Average >80% | - |
-| Processor Queue Length | Average >2 | - |
-| Memory Usage | >90% used | - |
-| Disk Space | - | Any volume <10% free |
-| Disk Latency | Read or Write >50ms avg | - |
-| Disk Health | - | SMART status not "Healthy" |
-| Network Errors | >10 errors during sampling | - |
-| DPC/ISR Time | Combined >15% | Combined >30% |
-| High-Severity Issues | Any Potential Issue with "High" severity | - |
+| Check | Warning Trigger | Fail Trigger | Source |
+|-------|-----------------|--------------|--------|
+| Pending Reboot | - | Any reboot pending | Windows registry |
+| CPU Usage | Average >80% | Average >90% | Microsoft docs |
+| Memory Usage | Average >85% | Average >90% | Active paging threshold |
+| Disk Space | Any volume <15% free | Any volume <10% free | Windows red bar |
+| Disk Latency | Read or Write >25ms avg | >50ms avg | Microsoft: "extremely underperforming" |
+| Disk Health | - | SMART status not "Healthy" | Drive self-reporting |
+| DPC/ISR Time | Combined >15% | Combined >30% | Microsoft docs |
 
-### Potential Issues Detection
+### Observations (Informational)
 
-These checks create **actionable items** for technicians with context (What, Why, Action, EnvironmentalNote).
+These are presented for technician awareness without health status judgments:
 
-| Check | Trigger | Severity |
-|-------|---------|----------|
-| Browser Memory (Chrome/Edge/Firefox) | >8GB or >50% of system RAM (whichever is higher) | Medium (High if >12GB or >60% RAM) |
-| High Memory Application | >2GB (non-browser apps) | Medium (High if >4GB) |
-| Windows Update Active | TiWorker, TrustedInstaller, or wuauclt running | Info |
-| Defender Scan Active | Full or Quick scan in progress (via Get-MpComputerStatus) | Info |
-| DPC/ISR Time | Combined >15% | Medium (High if >30%) |
+| Observation | When Shown |
+|-------------|------------|
+| Browser Memory | Chrome/Edge using >8GB or >50% of system RAM |
+| High Memory Application | Non-browser app using >2GB |
+| Windows Update Active | TiWorker, TrustedInstaller, or wuauclt running |
+| Defender Scan Active | Full or Quick scan in progress |
+| High DPC/ISR Time | Combined >15% (context for potential driver issues) |
 
 ### Informational Data (No Thresholds)
 
@@ -461,14 +484,15 @@ This data is collected and displayed for context but does not trigger warnings:
 
 | Section | Data Collected |
 |---------|----------------|
-| Browser Analysis | Chrome/Edge: process count, memory per process, extensions, GPU memory |
+| Pending Reboot | Reasons why a reboot is required |
+| Recently Installed | Software and Windows Updates from last 7 days |
+| User Profile | Total size and breakdown by folder |
+| Browser Extensions | Chrome/Edge extension names and versions |
+| Intune Sync | Last sync time with "X days ago" format |
+| Startup Programs | Name, location, scope, type |
 | Event Log Summary | Disk events, kernel errors, app crashes, update failures (48 hours) |
-| Configuration Health | Page file config, pending updates, Intune enrollment, GPO remnants, startup programs |
 | Top Processes | Top 10 by CPU time, memory, and disk I/O |
 | Peak Processes | Processes with highest resource usage during sampling |
-| Power Plan | Active power plan (warns if Power Saver throttles CPU) |
-| Problem Devices | Devices with errors in Device Manager |
-| Startup Programs | Registry Run keys, Startup folders, Scheduled Tasks with logon triggers |
 
 ---
 
@@ -559,15 +583,6 @@ This data is collected and displayed for context but does not trigger warnings:
 **Source:** Microsoft documentation states "If a processor instance is running a sustained % Processor Time that is > 85% and it is also spending > 15% of that time servicing Interrupts and/or DPCs, the processor is probably the source of a performance bottleneck" and "If the processor is running a sustained % Processor Time of < 85% and it is also spending > 15% of that time servicing interrupts and/or DPCs, the performance issue may be the result of either an application or hardware related issue."
 - [Microsoft SCOM: CPU DPC Time Percentage Monitor](https://systemcenter.wiki/?GetElement=Microsoft.Windows.Server.10.0.Processor.PercentDPCTime&ManagementPack=Microsoft.Windows.Server.2016.Monitoring&Type=UnitMonitor)
 
-### Network Errors
-
-| Threshold | Status | Description |
-|-----------|--------|-------------|
-| 0-10 | Normal | Minimal packet errors during sampling |
-| > 10 | Warning | Elevated errors may indicate connectivity issues |
-
-**Source:** General network monitoring guidance. Packet errors during a short sampling window suggest NIC problems, cable issues, or network congestion.
-
 ### High Memory Application
 
 | Threshold | Status | Description |
@@ -620,6 +635,7 @@ This data is collected and displayed for context but does not trigger warnings:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1.0 | 2025-12-01 | ServiceNow integration (clipboard + markdown), pending reboot detection, recent installs, user profile size, browser extension names, Intune sync recency, health status philosophy update |
 | 1.0.0 | 2025-11-22 | Initial release |
 
 ## Author

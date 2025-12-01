@@ -54,7 +54,7 @@ param(
 
 #region Script Configuration
 $Script:Config = @{
-    Version = "1.0.0"
+    Version = "1.1.0"
     ScriptName = "PULSE"
     OutputPath = $OutputPath
     SampleDuration = $SampleDuration
