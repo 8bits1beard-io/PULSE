@@ -26,11 +26,14 @@ PULSE collects detailed system performance data over a configurable sampling per
 
 ### Key Characteristics
 
+- **Read-only** - Discovery only; does not modify, delete, or alter the system in any way
 - **On-demand execution** - Not scheduled, run when needed
 - **Offline capable** - No internet connectivity required
 - **Enterprise-ready** - Designed for Intune-managed Windows 11 machines
 - **Non-disruptive** - Runs quietly without user interruption
 - **Comprehensive** - Collects hardware, performance, process, and event data
+
+> **Note:** PULSE only creates report files in `C:\ProgramData\PULSE\` and copies a summary to the clipboard. It does not modify registry, change system settings, install/uninstall software, or alter any existing files on the system.
 
 ## Features
 
