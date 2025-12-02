@@ -1527,7 +1527,7 @@ function Get-ConfigurationHealth {
             "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
         )
 
-        $recentSoftware = foreach ($path in $uninstallPaths) {
+        $recentSoftware = $(foreach ($path in $uninstallPaths) {
             Get-ItemProperty -Path $path -ErrorAction SilentlyContinue |
                 Where-Object { $_.InstallDate -and $_.DisplayName } |
                 ForEach-Object {
@@ -1545,7 +1545,7 @@ function Get-ConfigurationHealth {
                         }
                     }
                 }
-        } | Sort-Object InstallDate -Descending | Select-Object -Unique -Property Name, Version, InstallDate, Publisher
+        }) | Sort-Object InstallDate -Descending | Select-Object -Unique -Property Name, Version, InstallDate, Publisher
 
         $recentItems.Software = @($recentSoftware | ForEach-Object {
             [ordered]@{
@@ -3858,7 +3858,9 @@ function Invoke-PULSE {
     $Script:Results.Metadata.IsElevated = $Script:Config.IsElevated
 
     if (-not $Script:Config.IsElevated -and -not $SkipElevationCheck) {
-        Write-Log -Message "Running without elevation - some data may be unavailable" -Level Warning
+        Write-Log -Message "PULSE requires administrator privileges for full functionality." -Level Error
+        Write-Log -Message "Please run PowerShell as Administrator, or use -SkipElevationCheck for limited data collection." -Level Error
+        return
     }
 
     # Create output directory
