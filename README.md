@@ -91,6 +91,7 @@ The script uses built-in cmdlets and does not require external modules:
 
 ```powershell
 # Run with default settings (60-second sample, 2-second interval)
+# NOTE: Requires Administrator privileges
 .\PULSE.ps1
 ```
 
@@ -103,7 +104,7 @@ The script uses built-in cmdlets and does not require external modules:
 # Custom output path
 .\PULSE.ps1 -OutputPath "D:\Diagnostics"
 
-# Skip elevation check (some modules may fail)
+# Run without admin (limited data collection - not recommended)
 .\PULSE.ps1 -SkipElevationCheck
 ```
 
@@ -114,7 +115,7 @@ The script uses built-in cmdlets and does not require external modules:
 | `-OutputPath` | String | `C:\ProgramData\PULSE\` | Directory for report output |
 | `-SampleDuration` | Int | 60 | Performance sampling duration (10-300 seconds) |
 | `-SampleInterval` | Int | 2 | Interval between samples (1-10 seconds) |
-| `-SkipElevationCheck` | Switch | False | Skip admin privilege check |
+| `-SkipElevationCheck` | Switch | False | Allow running without admin (limited data collection) |
 
 ## Module Documentation
 
