@@ -1468,10 +1468,26 @@ function Get-ConfigurationHealth {
         }
 
         # Check Pending File Rename Operations
+        # This registry value contains pairs: source file, then destination (empty = delete)
+        # Format: \??\C:\path\file.ext followed by empty string (delete) or destination path (rename)
+        # Entries starting with *1 are delete operations for temp files - these are routine cleanup
+        # and should NOT trigger a reboot warning
         $pendingFileRename = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name "PendingFileRenameOperations" -ErrorAction SilentlyContinue
         if ($pendingFileRename.PendingFileRenameOperations) {
-            $rebootRequired = $true
-            [void]$rebootReasons.Add("Pending file rename operations")
+            # Filter out temp file cleanup entries (delete operations in Temp folders)
+            $significantOperations = $pendingFileRename.PendingFileRenameOperations | Where-Object {
+                # Skip empty entries
+                if ([string]::IsNullOrWhiteSpace($_)) { return $false }
+                # Skip temp file delete markers (start with *1 and point to Temp folders)
+                if ($_ -match '^\*1\\' -and $_ -match '\\Temp\\') { return $false }
+                # Skip entries that are just temp folder paths being deleted
+                if ($_ -match '\\(Local|Roaming)\\Temp\\') { return $false }
+                return $true
+            }
+            if ($significantOperations.Count -gt 0) {
+                $rebootRequired = $true
+                [void]$rebootReasons.Add("Pending file rename operations")
+            }
         }
 
         # Check Computer Rename Pending
