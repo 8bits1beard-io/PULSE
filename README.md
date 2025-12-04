@@ -8,14 +8,6 @@ When a user reports their workstation is slow, technicians face a time-consuming
 
 ---
 
-| Responsibility | Owner |
-|----------------|-------|
-| Run diagnostic on workstation | Support technician |
-| Interpret results and take action | Support technician |
-| Deploy script to technician toolset | Desktop Engineering |
-
----
-
 **How it works:**
 
 1. Technician runs `.\PULSE.ps1` on the affected workstation (requires Administrator)
