@@ -2739,7 +2739,81 @@ function Export-MarkdownReport {
             [void]$sb.AppendLine("| Application Crashes | $($Data.EventLogSummary.Summary.TotalAppCrashes) |")
             [void]$sb.AppendLine("| Update Failures | $($Data.EventLogSummary.Summary.TotalUpdateFailures) |")
             [void]$sb.AppendLine("| Browser Crashes | $($Data.EventLogSummary.Summary.TotalBrowserCrashes) |")
+            [void]$sb.AppendLine("| Security Events | $($Data.EventLogSummary.Summary.TotalSecurityEvents) |")
             [void]$sb.AppendLine()
+
+            # Kernel/Driver Errors Details
+            if ($Data.EventLogSummary.KernelDriverErrors -and $Data.EventLogSummary.KernelDriverErrors.Count -gt 0) {
+                [void]$sb.AppendLine("### Kernel/Driver Errors")
+                [void]$sb.AppendLine()
+                [void]$sb.AppendLine("| Time | Level | Provider | Message |")
+                [void]$sb.AppendLine("|------|-------|----------|---------|")
+                foreach ($event in ($Data.EventLogSummary.KernelDriverErrors | Select-Object -First 10)) {
+                    [void]$sb.AppendLine("| $($event.TimeCreated) | $($event.Level) | $($event.Provider) | $($event.Message) |")
+                }
+                [void]$sb.AppendLine()
+            }
+
+            # Disk Events Details
+            if ($Data.EventLogSummary.DiskEvents -and $Data.EventLogSummary.DiskEvents.Count -gt 0) {
+                [void]$sb.AppendLine("### Disk Events")
+                [void]$sb.AppendLine()
+                [void]$sb.AppendLine("| Time | Level | Provider | Message |")
+                [void]$sb.AppendLine("|------|-------|----------|---------|")
+                foreach ($event in ($Data.EventLogSummary.DiskEvents | Select-Object -First 10)) {
+                    [void]$sb.AppendLine("| $($event.TimeCreated) | $($event.Level) | $($event.Provider) | $($event.Message) |")
+                }
+                [void]$sb.AppendLine()
+            }
+
+            # Application Crashes Details
+            if ($Data.EventLogSummary.ApplicationCrashes -and $Data.EventLogSummary.ApplicationCrashes.Count -gt 0) {
+                [void]$sb.AppendLine("### Application Crashes")
+                [void]$sb.AppendLine()
+                [void]$sb.AppendLine("| Time | Application | Type |")
+                [void]$sb.AppendLine("|------|-------------|------|")
+                foreach ($event in ($Data.EventLogSummary.ApplicationCrashes | Select-Object -First 10)) {
+                    $crashType = if ($event.Provider -eq 'Application Hang') { 'Hang' } else { 'Crash' }
+                    [void]$sb.AppendLine("| $($event.TimeCreated) | $($event.Application) | $crashType |")
+                }
+                [void]$sb.AppendLine()
+            }
+
+            # Update Failures Details
+            if ($Data.EventLogSummary.UpdateFailures -and $Data.EventLogSummary.UpdateFailures.Count -gt 0) {
+                [void]$sb.AppendLine("### Update Failures")
+                [void]$sb.AppendLine()
+                [void]$sb.AppendLine("| Time | Level | Event ID | Message |")
+                [void]$sb.AppendLine("|------|-------|----------|---------|")
+                foreach ($event in ($Data.EventLogSummary.UpdateFailures | Select-Object -First 10)) {
+                    [void]$sb.AppendLine("| $($event.TimeCreated) | $($event.Level) | $($event.Id) | $($event.Message) |")
+                }
+                [void]$sb.AppendLine()
+            }
+
+            # Browser Crashes Details
+            if ($Data.EventLogSummary.BrowserCrashes -and $Data.EventLogSummary.BrowserCrashes.Count -gt 0) {
+                [void]$sb.AppendLine("### Browser Crashes")
+                [void]$sb.AppendLine()
+                [void]$sb.AppendLine("| Time | Provider | Event ID | Message |")
+                [void]$sb.AppendLine("|------|----------|----------|---------|")
+                foreach ($event in ($Data.EventLogSummary.BrowserCrashes | Select-Object -First 10)) {
+                    [void]$sb.AppendLine("| $($event.TimeCreated) | $($event.Provider) | $($event.Id) | $($event.Message) |")
+                }
+                [void]$sb.AppendLine()
+            }
+
+            # Security Events Details
+            if ($Data.EventLogSummary.SecurityEvents -and $Data.EventLogSummary.SecurityEvents.Count -gt 0) {
+                [void]$sb.AppendLine("### Security Events (Authentication Failures)")
+                [void]$sb.AppendLine()
+                [void]$sb.AppendLine("| Time | Event Type | Event ID | Message |")
+                [void]$sb.AppendLine("|------|------------|----------|---------|")
+                foreach ($event in ($Data.EventLogSummary.SecurityEvents | Select-Object -First 10)) {
+                    [void]$sb.AppendLine("| $($event.TimeCreated) | $($event.EventType) | $($event.Id) | $($event.Message) |")
+                }
+                [void]$sb.AppendLine()
+            }
         }
 
         # Footer
@@ -3804,6 +3878,110 @@ function Export-HtmlReport {
                                 <td>$($_.TimeCreated)</td>
                                 <td>$($_.Application)</td>
                                 <td>$(if ($_.Provider -eq 'Application Hang') { 'Hang' } else { 'Crash' })</td>
+                            </tr>
+"@ })
+                        </tbody>
+                    </table>
+                </div>
+"@ })
+
+                $(if ($Data.EventLogSummary.DiskEvents -and $Data.EventLogSummary.DiskEvents.Count -gt 0) { @"
+                <div class="subsection">
+                    <h3>Disk Events</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Level</th>
+                                <th>Provider</th>
+                                <th>Message</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            $($Data.EventLogSummary.DiskEvents | Select-Object -First 10 | ForEach-Object { @"
+                            <tr>
+                                <td>$($_.TimeCreated)</td>
+                                <td><span class="status $(switch ($_.Level) { 'Critical' { 'fail' } 'Error' { 'fail' } 'Warning' { 'warning' } default { 'pass' } })">$($_.Level)</span></td>
+                                <td>$($_.Provider)</td>
+                                <td>$($_.Message)</td>
+                            </tr>
+"@ })
+                        </tbody>
+                    </table>
+                </div>
+"@ })
+
+                $(if ($Data.EventLogSummary.UpdateFailures -and $Data.EventLogSummary.UpdateFailures.Count -gt 0) { @"
+                <div class="subsection">
+                    <h3>Update Failures</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Level</th>
+                                <th>Event ID</th>
+                                <th>Message</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            $($Data.EventLogSummary.UpdateFailures | Select-Object -First 10 | ForEach-Object { @"
+                            <tr>
+                                <td>$($_.TimeCreated)</td>
+                                <td><span class="status $(switch ($_.Level) { 'Critical' { 'fail' } 'Error' { 'fail' } 'Warning' { 'warning' } default { 'pass' } })">$($_.Level)</span></td>
+                                <td>$($_.Id)</td>
+                                <td>$($_.Message)</td>
+                            </tr>
+"@ })
+                        </tbody>
+                    </table>
+                </div>
+"@ })
+
+                $(if ($Data.EventLogSummary.BrowserCrashes -and $Data.EventLogSummary.BrowserCrashes.Count -gt 0) { @"
+                <div class="subsection">
+                    <h3>Browser Crashes</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Provider</th>
+                                <th>Event ID</th>
+                                <th>Message</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            $($Data.EventLogSummary.BrowserCrashes | Select-Object -First 10 | ForEach-Object { @"
+                            <tr>
+                                <td>$($_.TimeCreated)</td>
+                                <td>$($_.Provider)</td>
+                                <td>$($_.Id)</td>
+                                <td>$($_.Message)</td>
+                            </tr>
+"@ })
+                        </tbody>
+                    </table>
+                </div>
+"@ })
+
+                $(if ($Data.EventLogSummary.SecurityEvents -and $Data.EventLogSummary.SecurityEvents.Count -gt 0) { @"
+                <div class="subsection">
+                    <h3>Security Events (Authentication Failures)</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Event Type</th>
+                                <th>Event ID</th>
+                                <th>Message</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            $($Data.EventLogSummary.SecurityEvents | Select-Object -First 10 | ForEach-Object { @"
+                            <tr>
+                                <td>$($_.TimeCreated)</td>
+                                <td>$($_.EventType)</td>
+                                <td>$($_.Id)</td>
+                                <td>$($_.Message)</td>
                             </tr>
 "@ })
                         </tbody>
